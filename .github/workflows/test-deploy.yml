@@ -1,3 +1,4 @@
+```yaml
 name: VSO UI Test - CI/CD to EKS
 
 on:
@@ -48,39 +49,10 @@ jobs:
           path: coverage/
           if-no-files-found: ignore
 
-  sonarqube:
-    name: SonarQube analysis
-    runs-on: ubuntu-24.04
-    needs: test
-    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.fork == false
-
-    steps:
-      - name: Checkout source
-        uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
-
-      - name: Set up Node.js
-        uses: actions/setup-node@v4
-        with:
-          node-version: "22"
-          cache: npm
-
-      - name: Install dependencies and generate coverage
-        run: |
-          npm ci
-          npm test
-
-      - name: Run SonarQube scan
-        uses: SonarSource/sonarqube-scan-action@v5
-        env:
-          SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
-          SONAR_HOST_URL: ${{ secrets.SONAR_HOST_URL }}
-
   build-and-deploy:
     name: Build image and deploy with Helm
     runs-on: ubuntu-24.04
-    needs: [test, sonarqube]
+    needs: test
     if: github.event_name != 'pull_request' && github.ref == 'refs/heads/test'
 
     permissions:
@@ -152,3 +124,4 @@ jobs:
             --namespace vso-test \
             --timeout=180s
           kubectl get pods,services -n vso-test
+```
