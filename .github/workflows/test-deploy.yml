@@ -1,4 +1,3 @@
-```yaml
 name: VSO UI Test - CI/CD to EKS
 
 on:
@@ -124,4 +123,3 @@ jobs:
             --namespace vso-test \
             --timeout=180s
           kubectl get pods,services -n vso-test
-```
