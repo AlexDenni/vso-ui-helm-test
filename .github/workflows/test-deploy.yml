@@ -99,7 +99,7 @@ jobs:
       - name: Install kubelogin
         uses: azure/use-kubelogin@v1
         with:
-          kubelogin-version: 'latest'
+          kubelogin-version: 'v0.2.18'
 
       - name: Get AKS credentials
         run: |
