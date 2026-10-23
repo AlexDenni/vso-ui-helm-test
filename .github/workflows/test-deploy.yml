@@ -10,6 +10,148 @@ on:
   workflow_dispatch:
 
 permissions:
+name: VSO UI Test - CI/CD to AKS
+
+on:
+  push:
+    branches:
+      - test
+  pull_request:
+    branches:
+      - test
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  AZURE_RESOURCE_GROUP: rg-vso-uat
+  AKS_CLUSTER_NAME: aks-vso-uat
+  ACR_NAME: vsouatacr
+  ACR_LOGIN_SERVER: vsouatacr.azurecr.io
+  IMAGE_NAME: vso-ui-test
+  NAMESPACE: vso-uat
+  HELM_RELEASE_NAME: vso-ui-uat
+  HELM_CHART_PATH: helm/vso-ui
+
+jobs:
+  test:
+    name: Run frontend tests
+    runs-on: ubuntu-24.04
+
+    steps:
+      - name: Checkout source
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Run tests and coverage
+        run: npm test
+
+      - name: Upload coverage report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: frontend-coverage
+          path: coverage/
+          if-no-files-found: ignore
+
+  build-and-deploy:
+    name: Build image and deploy to AKS
+    runs-on: ubuntu-24.04
+    needs: test
+    if: github.event_name != 'pull_request' && github.ref == 'refs/heads/test'
+
+    permissions:
+      contents: read
+      id-token: write
+
+    steps:
+      - name: Checkout source
+        uses: actions/checkout@v4
+
+      - name: Sign in to Azure using OIDC
+        uses: azure/login@v2
+        with:
+          client-id: ${{ vars.AZURE_CLIENT_ID }}
+          tenant-id: ${{ vars.AZURE_TENANT_ID }}
+          subscription-id: ${{ vars.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Log in to Azure Container Registry
+        run: az acr login --name "$ACR_NAME"
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build and push image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          push: true
+          tags: |
+            vsouatacr.azurecr.io/vso-ui-test:${{ github.sha }}
+            vsouatacr.azurecr.io/vso-ui-test:latest
+
+      - name: Install kubectl
+        uses: azure/setup-kubectl@v4
+
+      - name: Install Helm
+        uses: azure/setup-helm@v4
+        with:
+          version: v3.17.3
+
+      - name: Install kubelogin
+        uses: azure/use-kubelogin@v1
+        with:
+          kubelogin-version: 'latest'
+
+      - name: Get AKS credentials
+        run: |
+          az aks get-credentials \
+            --resource-group "$AZURE_RESOURCE_GROUP" \
+            --name "$AKS_CLUSTER_NAME" \
+            --overwrite-existing
+
+          kubelogin convert-kubeconfig -l azurecli
+
+      - name: Validate Helm chart
+        run: |
+          helm lint "$HELM_CHART_PATH"
+
+          helm template "$HELM_RELEASE_NAME" "$HELM_CHART_PATH" \
+            --namespace "$NAMESPACE" \
+            --set image.repository="$ACR_LOGIN_SERVER/$IMAGE_NAME" \
+            --set image.tag="${{ github.sha }}" \
+            --set service.type=ClusterIP
+
+      - name: Deploy with Helm
+        run: |
+          helm upgrade --install "$HELM_RELEASE_NAME" "$HELM_CHART_PATH" \
+            --namespace "$NAMESPACE" \
+            --create-namespace \
+            --set image.repository="$ACR_LOGIN_SERVER/$IMAGE_NAME" \
+            --set image.tag="${{ github.sha }}" \
+            --set service.type=ClusterIP \
+            --wait \
+            --timeout 5m
+
+      - name: Verify deployment
+        run: |
+          kubectl rollout status \
+            deployment/"$HELM_RELEASE_NAME" \
+            --namespace "$NAMESPACE" \
+            --timeout=180s
+
+          kubectl get pods,services \
+            --namespace "$NAMESPACE"
+
   contents: read
 
 env:
